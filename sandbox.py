@@ -14,65 +14,95 @@ from webdriver_manager.chrome import ChromeDriverManager
 # For colored console logs
 try:
     from colorama import Fore, Style, init
-    init(autoreset=True)  # Automatically reset colors after each print
+    init(autoreset=True)
 except ImportError:
-    # If colorama is not available, we'll define fallback constants
+    # Fallback if colorama isn't installed
     class Fore:
         GREEN = ''
         RED = ''
     class Style:
         RESET_ALL = ''
 
+def scroll_down_infinite(driver, attempts=5, pause_time=2):
+    """
+    Scrolls down the page multiple times to trigger infinite scrolling.
+    Args:
+        driver: The Selenium WebDriver instance.
+        attempts: How many times to scroll before giving up.
+        pause_time: Seconds to wait after each scroll for content to load.
+    """
+    last_height = driver.execute_script("return document.body.scrollHeight")
+
+    for i in range(attempts):
+        # Scroll to the bottom
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(pause_time)
+
+        # Calculate new scroll height and compare with last scroll height
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            # We've reached the bottom or no more new content is loading
+            break
+        last_height = new_height
+
 
 def get_portfolio_news(driver, url):
     """
-    Navigates to the Yahoo Finance portfolios page, parses the news items,
-    and returns a list of dictionaries with:
+    Navigates to the Yahoo Finance portfolios page, scrolls to load news items (infinite scroll),
+    parses the news items, and returns a list of dictionaries with:
       count, title, description, url, publisher, and when.
+
+    If the news section is not found, returns None.
     """
     driver.get(url)
     time.sleep(5)
 
+    # Scroll to load more news (infinite scroll)
+    scroll_down_infinite(driver, attempts=5, pause_time=2)
+
+    # Now parse the loaded page source
     soup = BeautifulSoup(driver.page_source, 'html.parser')
     portfolio_news_section = soup.find('section', class_='container yf-1ce4p3e hideOnPrint', 
                                        attrs={'data-testid': 'port-news'})
 
+    if not portfolio_news_section:
+        return None  # Indicate we didn't find the news section at all
+
+    # Parse the news stories
+    soup_news_only = BeautifulSoup(portfolio_news_section.prettify(), 'html.parser')
+    news_items = soup_news_only.find_all('section', class_='container', attrs={'data-testid': 'storyitem'})
+
     news_list = []
-    if portfolio_news_section:
-        soup_news_only = BeautifulSoup(portfolio_news_section.prettify(), 'html.parser')
-        news_items = soup_news_only.find_all(
-            'section', class_='container', attrs={'data-testid': 'storyitem'}
-        )
+    for i, item in enumerate(news_items, start=1):
+        title_tag = item.find('a', {'aria-label': True})
+        title = title_tag['aria-label'] if title_tag else None
 
-        for i, item in enumerate(news_items, start=1):
-            title_tag = item.find('a', {'aria-label': True})
-            title = title_tag['aria-label'] if title_tag else None
+        news_url = title_tag['href'] if title_tag else None
 
-            news_url = title_tag['href'] if title_tag else None
+        description_tag = item.find('p', class_='clamp')
+        description = description_tag.text.strip() if description_tag else None
 
-            description_tag = item.find('p', class_='clamp')
-            description = description_tag.text.strip() if description_tag else None
+        footer_tag = item.find('div', class_='footer')
+        if footer_tag:
+            publisher_tag = footer_tag.find('div', class_='publishing')
+            publisher = publisher_tag.contents[0].strip() if publisher_tag else None
+            timestamp = (
+                publisher_tag.contents[-1].strip()
+                if (publisher_tag and len(publisher_tag.contents) > 1)
+                else None
+            )
+        else:
+            publisher = None
+            timestamp = None
 
-            footer_tag = item.find('div', class_='footer')
-            if footer_tag:
-                publisher_tag = footer_tag.find('div', class_='publishing')
-                publisher = publisher_tag.contents[0].strip() if publisher_tag else None
-                timestamp = (publisher_tag.contents[-1].strip()
-                             if (publisher_tag and len(publisher_tag.contents) > 1) else None)
-            else:
-                publisher = None
-                timestamp = None
-
-            news_list.append({
-                'count': i,  # This is for reference; final_news_list won't use this as final count
-                'title': title,
-                'description': description,
-                'url': news_url,
-                'publisher': publisher,
-                'when': timestamp
-            })
-    else:
-        print(Fore.RED + "Portfolio news section not found." + Style.RESET_ALL)
+        news_list.append({
+            'count': i,  # This is just for reference
+            'title': title,
+            'description': description,
+            'url': news_url,
+            'publisher': publisher,
+            'when': timestamp
+        })
 
     return news_list
 
@@ -81,10 +111,10 @@ def get_full_article(driver, article_url):
     """
     Navigates to the individual news article page, attempts to find the "Story Continues" button.
     If not found, prints 'External Article, skipping...' and returns None.
-    If found, clicks the button, then parses the article fields:
+    If found, clicks the button, then parses:
       - title (from .cover-title)
       - author (from .byline-attr-author)
-      - when (from <time class="byline-attr-meta-time">)
+      - when (from time.byline-attr-meta-time)
       - content (from .article.yf-l7apfj)
       - stocks (from .scroll-carousel with data-testid="ticker-container")
     """
@@ -129,7 +159,10 @@ def get_full_article(driver, article_url):
     article_content = article_div.get_text(separator='\n', strip=True)
 
     # Stocks
-    stocks_div = soup.find('div', class_='scroll-carousel yf-r5lvmz', attrs={'data-testid': 'carousel-container'})
+    stocks_div = soup.find(
+        'div', class_='scroll-carousel yf-r5lvmz',
+        attrs={'data-testid': 'carousel-container'}
+    )
     stocks = []
     if stocks_div:
         ticker_links = stocks_div.find_all('a', {'data-testid': 'ticker-container'})
@@ -163,31 +196,38 @@ if __name__ == "__main__":
 
     try:
         print(Fore.GREEN + "Opening the browser with user data directory..." + Style.RESET_ALL)
-        driver.get(url)
-        time.sleep(5)
 
-        input(Fore.GREEN + "If not logged in, please log in, then press Enter to continue..." + Style.RESET_ALL)
-
-        # 1. Get the 'news_list' from the portfolio page
+        # 1. Attempt to fetch news without prompting for login
         news_list = get_portfolio_news(driver, url)
-        
-        # Save news_list to JSON
+
+        if not news_list:
+            # Could not find the news section => likely not logged in or another problem
+            print(Fore.RED + "Could not find the portfolio news. Possibly not logged in." + Style.RESET_ALL)
+            input(Fore.GREEN + "Please log in (if not already). After logging in, press Enter to continue..." + Style.RESET_ALL)
+
+            # Try again after manual login
+            news_list = get_portfolio_news(driver, url)
+            if not news_list:
+                print(Fore.RED + "Still cannot find the portfolio news. Exiting." + Style.RESET_ALL)
+                driver.quit()
+                exit(1)
+
+        # 2. Save the news_list to JSON
         with open("news_list.json", "w", encoding='utf-8') as f:
             json.dump(news_list, f, indent=2, ensure_ascii=False)
 
-        # 2. Build the final news list (first 5 with actual content)
+        # 3. Build the final list of news articles with content
         final_news_list = []
         current_final_count = 1
 
         for item in news_list:
             article_url = item.get('url')
             if not article_url:
-                continue  # skip items without URL
+                print(Fore.ORANGE + f"Skipping item {item['count']} without a valid URL." + Style.RESET_ALL)
+                continue  # skip items without a valid URL
 
-            # Attempt to extract the full article
             article_info = get_full_article(driver, article_url)
             if article_info:
-                # We do not reuse the 'count' from news_list; we have our own final count
                 final_news_list.append({
                     'count': current_final_count,
                     'url': article_url,
@@ -200,6 +240,7 @@ if __name__ == "__main__":
                 })
                 current_final_count += 1
 
+                # Stop after 5 items with content
                 if len(final_news_list) == 5:
                     break
 
