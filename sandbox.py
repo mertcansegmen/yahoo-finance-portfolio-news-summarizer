@@ -3,6 +3,7 @@ import time
 import json
 import pickle
 from bs4 import BeautifulSoup
+from colorama import Fore, Style, init
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -11,17 +12,23 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 
-# For colored console logs
-try:
-    from colorama import Fore, Style, init
-    init(autoreset=True)
-except ImportError:
-    # Fallback if colorama isn't installed
-    class Fore:
-        GREEN = ''
-        RED = ''
-    class Style:
-        RESET_ALL = ''
+init(autoreset=True)
+
+def i_print(message: str):
+    """Info print."""
+    print(Fore.BLUE + "[INFO] " + message + Style.RESET_ALL)
+
+def w_print(message: str):
+    """Warning print."""
+    print(Fore.YELLOW + "[WARNING] " + message + Style.RESET_ALL)
+
+def d_print(message: str):
+    """Danger (error) print."""
+    print(Fore.RED + "[DANGER] " + message + Style.RESET_ALL)
+
+def s_print(message: str):
+    """Success print."""
+    print(Fore.GREEN + "[SUCCESS] " + message + Style.RESET_ALL)
 
 def scroll_down_infinite(driver, attempts=5, pause_time=2):
     """
@@ -32,26 +39,21 @@ def scroll_down_infinite(driver, attempts=5, pause_time=2):
         pause_time: Seconds to wait after each scroll for content to load.
     """
     last_height = driver.execute_script("return document.body.scrollHeight")
-
-    for i in range(attempts):
-        # Scroll to the bottom
+    for _ in range(attempts):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(pause_time)
 
-        # Calculate new scroll height and compare with last scroll height
         new_height = driver.execute_script("return document.body.scrollHeight")
+        # If we haven't loaded more content, break early
         if new_height == last_height:
-            # We've reached the bottom or no more new content is loading
             break
         last_height = new_height
-
 
 def get_portfolio_news(driver, url):
     """
     Navigates to the Yahoo Finance portfolios page, scrolls to load news items (infinite scroll),
-    parses the news items, and returns a list of dictionaries with:
-      count, title, description, url, publisher, and when.
-
+    parses the news items, and returns a list of dictionaries:
+      count, title, description, url, publisher, when
     If the news section is not found, returns None.
     """
     driver.get(url)
@@ -60,13 +62,13 @@ def get_portfolio_news(driver, url):
     # Scroll to load more news (infinite scroll)
     scroll_down_infinite(driver, attempts=5, pause_time=2)
 
-    # Now parse the loaded page source
+    # Parse the loaded page
     soup = BeautifulSoup(driver.page_source, 'html.parser')
     portfolio_news_section = soup.find('section', class_='container yf-1ce4p3e hideOnPrint', 
                                        attrs={'data-testid': 'port-news'})
 
     if not portfolio_news_section:
-        return None  # Indicate we didn't find the news section at all
+        return None  # Indicate that the news section was not found
 
     # Parse the news stories
     soup_news_only = BeautifulSoup(portfolio_news_section.prettify(), 'html.parser')
@@ -106,7 +108,6 @@ def get_portfolio_news(driver, url):
 
     return news_list
 
-
 def get_full_article(driver, article_url):
     """
     Navigates to the individual news article page, attempts to find the "Story Continues" button.
@@ -114,7 +115,7 @@ def get_full_article(driver, article_url):
     If found, clicks the button, then parses:
       - title (from .cover-title)
       - author (from .byline-attr-author)
-      - when (from time.byline-attr-meta-time)
+      - when (from <time class="byline-attr-meta-time">)
       - content (from .article.yf-l7apfj)
       - stocks (from .scroll-carousel with data-testid="ticker-container")
     """
@@ -129,7 +130,7 @@ def get_full_article(driver, article_url):
         story_continues_button.click()
         time.sleep(2)
     except NoSuchElementException:
-        print(Fore.RED + "External Article, skipping..." + Style.RESET_ALL)
+        w_print("External Article, skipping...")
         return None
 
     soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -153,7 +154,7 @@ def get_full_article(driver, article_url):
     # Main article content
     article_div = soup.find('div', class_='article yf-l7apfj')
     if not article_div:
-        print(Fore.RED + "Article div not found or different structure." + Style.RESET_ALL)
+        d_print("Article div not found or different structure.")
         return None
 
     article_content = article_div.get_text(separator='\n', strip=True)
@@ -171,6 +172,8 @@ def get_full_article(driver, article_url):
             if label:
                 stocks.append(label)
 
+    s_print(f"Article parsed: {article_title}")
+
     return {
         'title': article_title,
         'author': article_author,
@@ -178,6 +181,14 @@ def get_full_article(driver, article_url):
         'content': article_content,
         'stocks': stocks
     }
+
+def pick_news(final_news_list):
+    """
+    Decide which news items from final_news_list we want to summarize.
+    Placeholder: returns the entire list right now.
+    You can later add custom logic or filters here.
+    """
+    return final_news_list
 
 
 if __name__ == "__main__":
@@ -195,24 +206,23 @@ if __name__ == "__main__":
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        print(Fore.GREEN + "Opening the browser with user data directory..." + Style.RESET_ALL)
+        i_print("Opening the browser with user data directory...")
 
-        # 1. Attempt to fetch news without prompting for login
+        # 1. Attempt to fetch the news without prompting for login
         news_list = get_portfolio_news(driver, url)
 
         if not news_list:
-            # Could not find the news section => likely not logged in or another problem
-            print(Fore.RED + "Could not find the portfolio news. Possibly not logged in." + Style.RESET_ALL)
-            input(Fore.GREEN + "Please log in (if not already). After logging in, press Enter to continue..." + Style.RESET_ALL)
+            w_print("Could not find the portfolio news. Possibly not logged in.")
+            input(i_print("Please log in (if not already). Then press Enter to continue...") or "")
 
             # Try again after manual login
             news_list = get_portfolio_news(driver, url)
             if not news_list:
-                print(Fore.RED + "Still cannot find the portfolio news. Exiting." + Style.RESET_ALL)
+                d_print("Still cannot find the portfolio news. Exiting.")
                 driver.quit()
                 exit(1)
 
-        # 2. Save the news_list to JSON
+        # 2. Save the raw news_list to JSON
         with open("news_list.json", "w", encoding='utf-8') as f:
             json.dump(news_list, f, indent=2, ensure_ascii=False)
 
@@ -220,10 +230,11 @@ if __name__ == "__main__":
         final_news_list = []
         current_final_count = 1
 
+        # Attempt to parse all items
         for item in news_list:
             article_url = item.get('url')
             if not article_url:
-                print(Fore.ORANGE + f"Skipping item {item['count']} without a valid URL." + Style.RESET_ALL)
+                w_print(f"Skipping item {item['count']} without a valid URL.")
                 continue  # skip items without a valid URL
 
             article_info = get_full_article(driver, article_url)
@@ -240,17 +251,17 @@ if __name__ == "__main__":
                 })
                 current_final_count += 1
 
-                # Stop after 5 items with content
-                if len(final_news_list) == 5:
-                    break
-
-        # Save final_news_list to JSON
+        # 4. Save final_news_list to JSON
         with open("final_news_list.json", "w", encoding='utf-8') as f:
             json.dump(final_news_list, f, indent=2, ensure_ascii=False)
 
-        # Print minimal logs
-        print(Fore.GREEN + f"Collected {len(news_list)} items in news_list." + Style.RESET_ALL)
-        print(Fore.GREEN + f"Collected {len(final_news_list)} items in final_news_list (with content)." + Style.RESET_ALL)
+        # 5. Print logs
+        s_print(f"Collected {len(news_list)} items in news_list.")
+        s_print(f"Collected {len(final_news_list)} items in final_news_list (with content).")
+
+        # 6. Use the pick_news function to decide which articles to summarize
+        picked_articles = pick_news(final_news_list)
+        s_print(f"Picked {len(picked_articles)} articles to summarize.")
 
     finally:
         driver.quit()
