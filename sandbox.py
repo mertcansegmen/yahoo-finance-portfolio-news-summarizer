@@ -3,6 +3,7 @@ import time
 import json
 import pickle
 from bs4 import BeautifulSoup
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -10,51 +11,60 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 
+# For colored console logs
+try:
+    from colorama import Fore, Style, init
+    init(autoreset=True)  # Automatically reset colors after each print
+except ImportError:
+    # If colorama is not available, we'll define fallback constants
+    class Fore:
+        GREEN = ''
+        RED = ''
+    class Style:
+        RESET_ALL = ''
+
+
 def get_portfolio_news(driver, url):
     """
     Navigates to the Yahoo Finance portfolios page, parses the news items,
-    and returns a list of dictionaries with keys: title, description, url, publisher, and when.
+    and returns a list of dictionaries with:
+      count, title, description, url, publisher, and when.
     """
-    # Go to the given URL
     driver.get(url)
     time.sleep(5)
 
-    # Parse page source
     soup = BeautifulSoup(driver.page_source, 'html.parser')
-    portfolio_news_section = soup.find('section', class_='container yf-1ce4p3e hideOnPrint', attrs={'data-testid': 'port-news'})
+    portfolio_news_section = soup.find('section', class_='container yf-1ce4p3e hideOnPrint', 
+                                       attrs={'data-testid': 'port-news'})
 
-    # If the portfolio news section is found, parse the news stories
     news_list = []
     if portfolio_news_section:
-        # Convert the found section to a new soup to isolate its content
         soup_news_only = BeautifulSoup(portfolio_news_section.prettify(), 'html.parser')
-        news_items = soup_news_only.find_all('section', class_='container', attrs={'data-testid': 'storyitem'})
+        news_items = soup_news_only.find_all(
+            'section', class_='container', attrs={'data-testid': 'storyitem'}
+        )
 
-        # Extract relevant fields from each news item
-        for item in news_items:
-            # Extract title
+        for i, item in enumerate(news_items, start=1):
             title_tag = item.find('a', {'aria-label': True})
             title = title_tag['aria-label'] if title_tag else None
 
-            # Extract URL
             news_url = title_tag['href'] if title_tag else None
-            
-            # Extract description
+
             description_tag = item.find('p', class_='clamp')
             description = description_tag.text.strip() if description_tag else None
 
-            # Extract publisher and timestamp
             footer_tag = item.find('div', class_='footer')
             if footer_tag:
                 publisher_tag = footer_tag.find('div', class_='publishing')
                 publisher = publisher_tag.contents[0].strip() if publisher_tag else None
-                timestamp = publisher_tag.contents[-1].strip() if (publisher_tag and len(publisher_tag.contents) > 1) else None
+                timestamp = (publisher_tag.contents[-1].strip()
+                             if (publisher_tag and len(publisher_tag.contents) > 1) else None)
             else:
                 publisher = None
                 timestamp = None
 
-            # Add to the list
             news_list.append({
+                'count': i,  # This is for reference; final_news_list won't use this as final count
                 'title': title,
                 'description': description,
                 'url': news_url,
@@ -62,22 +72,25 @@ def get_portfolio_news(driver, url):
                 'when': timestamp
             })
     else:
-        print("Portfolio news section not found.")
+        print(Fore.RED + "Portfolio news section not found." + Style.RESET_ALL)
 
     return news_list
+
 
 def get_full_article(driver, article_url):
     """
     Navigates to the individual news article page, attempts to find the "Story Continues" button.
     If not found, prints 'External Article, skipping...' and returns None.
-    If found, clicks the button and returns the text content of the article.
+    If found, clicks the button, then parses the article fields:
+      - title (from .cover-title)
+      - author (from .byline-attr-author)
+      - when (from <time class="byline-attr-meta-time">)
+      - content (from .article.yf-l7apfj)
+      - stocks (from .scroll-carousel with data-testid="ticker-container")
     """
-    # Go to the specific article URL
     driver.get(article_url)
     time.sleep(3)
 
-    # Attempt to click the "Story Continues" button
-    # If not found, we assume it’s an external page or no expand needed
     try:
         story_continues_button = driver.find_element(
             By.CSS_SELECTOR,
@@ -86,175 +99,117 @@ def get_full_article(driver, article_url):
         story_continues_button.click()
         time.sleep(2)
     except NoSuchElementException:
-        print("External Article, skipping...")
+        print(Fore.RED + "External Article, skipping..." + Style.RESET_ALL)
         return None
 
-    # After expanding, parse the page again
     soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-    # Locate the main article content container
-    article_div = soup.find('div', class_='article yf-l7apfj')
+    # Article title
+    cover_title_div = soup.find('div', class_='cover-title yf-1at0uqp')
+    article_title = cover_title_div.get_text(strip=True) if cover_title_div else None
 
+    # Author & when
+    byline_div = soup.find('div', class_='byline-attr yf-1k5w6kz')
+    if byline_div:
+        author_div = byline_div.find('div', class_='byline-attr-author yf-1k5w6kz')
+        article_author = author_div.get_text(strip=True) if author_div else None
+
+        time_tag = byline_div.find('time', class_='byline-attr-meta-time')
+        article_when = time_tag.get_text(strip=True) if time_tag else None
+    else:
+        article_author = None
+        article_when = None
+
+    # Main article content
+    article_div = soup.find('div', class_='article yf-l7apfj')
     if not article_div:
-        print("Article div not found or different structure.")
+        print(Fore.RED + "Article div not found or different structure." + Style.RESET_ALL)
         return None
 
-    # Extract the text; you can fine-tune based on how you want to handle newlines
-    article_text = article_div.get_text(separator='\n', strip=True)
+    article_content = article_div.get_text(separator='\n', strip=True)
 
-    return article_text
+    # Stocks
+    stocks_div = soup.find('div', class_='scroll-carousel yf-r5lvmz', attrs={'data-testid': 'carousel-container'})
+    stocks = []
+    if stocks_div:
+        ticker_links = stocks_div.find_all('a', {'data-testid': 'ticker-container'})
+        for link in ticker_links:
+            label = link.get('aria-label')
+            if label:
+                stocks.append(label)
+
+    return {
+        'title': article_title,
+        'author': article_author,
+        'when': article_when,
+        'content': article_content,
+        'stocks': stocks
+    }
+
 
 if __name__ == "__main__":
-    # Your Yahoo Finance portfolios page (or the relevant URL)
     url = "https://finance.yahoo.com/portfolios"
-    
-    # Path to store Chrome user data (to stay logged in between runs)
     user_data_dir = os.path.join(os.getcwd(), "selenium_profile")
 
-    # Configure Selenium options
     chrome_options = Options()
     chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
-    # chrome_options.add_argument('--headless')  # Uncomment if you want headless mode
+    # chrome_options.add_argument('--headless')
 
-    # Set up the WebDriver
     service = Service(ChromeDriverManager().install())
-    service.log_level = "OFF"
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        # NOTE: If not logged in, you may need to log in manually. 
-        # The cookie/session state will remain in "selenium_profile" if you do.
-        print("Opening the browser with user data directory...")
+        print(Fore.GREEN + "Opening the browser with user data directory..." + Style.RESET_ALL)
         driver.get(url)
         time.sleep(5)
-        input("If not logged in, please log in, then press Enter to continue...")
 
-        # ---------------------------
-        # Fetch the portfolio news
-        # ---------------------------
+        input(Fore.GREEN + "If not logged in, please log in, then press Enter to continue..." + Style.RESET_ALL)
+
+        # 1. Get the 'news_list' from the portfolio page
         news_list = get_portfolio_news(driver, url)
+        
+        # Save news_list to JSON
+        with open("news_list.json", "w", encoding='utf-8') as f:
+            json.dump(news_list, f, indent=2, ensure_ascii=False)
 
-        # For debugging: print the raw news list
-        print(json.dumps(news_list, indent=2))
+        # 2. Build the final news list (first 5 with actual content)
+        final_news_list = []
+        current_final_count = 1
 
-        # --------------------------------------
-        # Pick the first 5 news items as example
-        # --------------------------------------
-        for i, news_item in enumerate(news_list[:5]):
-            print(f"\n=== News Item #{i+1} ===")
-            print(f"Title: {news_item['title']}")
-            print(f"URL: {news_item['url']}")
-            print(f"Publisher: {news_item['publisher']}")
-            print(f"Timestamp: {news_item['when']}")
-            print(f"Description: {news_item['description']}")
-            
-            # If there's a valid URL, attempt to get full article
-            if news_item['url']:
-                full_article_text = get_full_article(driver, news_item['url'])
-                if full_article_text:
-                    print("\n--- Article Content (truncated for demo) ---")
-                    print(full_article_text)  # Just print the first 500 chars for demo
-                else:
-                    print("Could not retrieve article content.")
-            else:
-                print("No URL found for this news item.")
+        for item in news_list:
+            article_url = item.get('url')
+            if not article_url:
+                continue  # skip items without URL
+
+            # Attempt to extract the full article
+            article_info = get_full_article(driver, article_url)
+            if article_info:
+                # We do not reuse the 'count' from news_list; we have our own final count
+                final_news_list.append({
+                    'count': current_final_count,
+                    'url': article_url,
+                    'publisher': item.get('publisher'),
+                    'title': article_info['title'],
+                    'content': article_info['content'],
+                    'stocks': article_info['stocks'],
+                    'when': article_info['when'],
+                    'author': article_info['author']
+                })
+                current_final_count += 1
+
+                if len(final_news_list) == 5:
+                    break
+
+        # Save final_news_list to JSON
+        with open("final_news_list.json", "w", encoding='utf-8') as f:
+            json.dump(final_news_list, f, indent=2, ensure_ascii=False)
+
+        # Print minimal logs
+        print(Fore.GREEN + f"Collected {len(news_list)} items in news_list." + Style.RESET_ALL)
+        print(Fore.GREEN + f"Collected {len(final_news_list)} items in final_news_list (with content)." + Style.RESET_ALL)
 
     finally:
         driver.quit()
-
-# user_data_dir = os.path.join(os.getcwd(), "selenium_profile")
-
-# # Configure Selenium options
-# chrome_options = Options()
-# chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
-
-# # chrome_options.add_argument('--headless')
-# chrome_options.add_argument('--disable-gpu')
-# chrome_options.add_argument('--no-sandbox')
-# chrome_options.add_argument('--disable-dev-shm-usage')
-
-# # Use WebDriverManager to get the ChromeDriver
-# service = Service(ChromeDriverManager().install())
-# driver = webdriver.Chrome(service=service, options=chrome_options)
-
-# # URL to fetch
-# url = "https://finance.yahoo.com/portfolios"
-
-# try:
-#     # Open the URL
-#     print("Opening the browser with user data directory...")
-#     driver.get(url)
-#     time.sleep(5)  # Allow the page to load
-
-#     # Log in manually if not already logged in
-#     print("If not logged in, please log in manually. The session will be saved for future runs.")
-#     input("Press Enter after ensuring you are logged in...")
-
-#     # Reload the target page
-#     driver.get(url)
-#     time.sleep(5)
-
-#     # Get the page source and parse it with BeautifulSoup
-#     html_string = driver.page_source
-#     soup = BeautifulSoup(html_string, 'html.parser')
-
-#     portfolio_news_section = soup.find('section', class_='container yf-1ce4p3e hideOnPrint', attrs={'data-testid': 'port-news'})
-
-#     # Extract the HTML of the section
-#     if portfolio_news_section:
-#         portfolio_news_html = portfolio_news_section.prettify()
-#         # print(portfolio_news_html)
-
-#         soup = BeautifulSoup(portfolio_news_html, 'html.parser')
-
-#         # Extract news items
-#         news_items = soup.find_all('section', class_='container', attrs={'data-testid': 'storyitem'})
-
-#         # List to store parsed news
-#         news_list = []
-
-#         for item in news_items:
-#             # Extract title
-#             title_tag = item.find('a', {'aria-label': True})
-#             title = title_tag['aria-label'] if title_tag else None
-
-#             # Extract URL
-#             url = title_tag['href'] if title_tag else None
-            
-#             # Extract description
-#             description_tag = item.find('p', class_='clamp')
-#             description = description_tag.text.strip() if description_tag else None
-
-#             # Extract publisher and timestamp
-#             footer_tag = item.find('div', class_='footer')
-#             if footer_tag:
-#                 publisher_tag = footer_tag.find('div', class_='publishing')
-#                 publisher = publisher_tag.contents[0].strip() if publisher_tag else None
-#                 timestamp = publisher_tag.contents[-1].strip() if publisher_tag and len(publisher_tag.contents) > 1 else None
-#             else:
-#                 publisher = None
-#                 timestamp = None
-
-#             # Append to the list
-#             news_list.append({
-#                 'title': title,
-#                 'description': description,
-#                 'url': url,
-#                 'publisher': publisher,
-#                 'when': timestamp
-#             })
-
-#         # Print the parsed news items
-#         for news in news_list:
-#             print(news)
-
-#         print(json.dumps(news_list, indent=4))
-#     else:
-#         print("Portfolio news section not found.")
-
-# finally:
-#     # Quit the WebDriver
-#     driver.quit()
