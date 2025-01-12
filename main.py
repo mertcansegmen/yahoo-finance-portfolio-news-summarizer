@@ -17,6 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 load_dotenv()
 
 SCROLL_DOWN_ATTEMPTS = 1
+SCROLL_DOWN_PAUSE_TIME = 2
 
 API_KEY = os.getenv('DEEPSEEK_API_KEY')
 API_URL = "https://api.deepseek.com/chat/completions"
@@ -75,7 +76,7 @@ def get_portfolio_news(driver, url):
     time.sleep(5)
 
     # Scroll to load more news (infinite scroll)
-    scroll_down_infinite(driver, attempts=SCROLL_DOWN_ATTEMPTS, pause_time=2)
+    scroll_down_infinite(driver, attempts=SCROLL_DOWN_ATTEMPTS, pause_time=SCROLL_DOWN_PAUSE_TIME)
 
     # Parse the loaded page
     soup = BeautifulSoup(driver.page_source, 'html.parser')
