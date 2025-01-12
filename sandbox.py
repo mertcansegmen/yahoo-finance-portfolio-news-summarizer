@@ -322,7 +322,7 @@ def summarize_articles(selected_articles):
 
 def save_summaries_to_markdown(summarized_articles, markdown_filename="summaries.md"):
     """
-    Creates a Markdown file containing each aerticle's mtadata and summary.
+    Creates a Markdown file containing each article's metadata and summary.
     """
     with open(markdown_filename, "w", encoding="utf-8") as md_file:
         md_file.write("# Summarized Articles\n\n")
@@ -341,7 +341,7 @@ def save_summaries_to_markdown(summarized_articles, markdown_filename="summaries
             md_file.write(f"- **Author**: {author}\n")
             md_file.write(f"- **Related Stocks**: {', '.join(stocks) if stocks else 'None'}\n")
             if url:
-                md_file.write(f"- **Original Article**: [Go to the original article]({url})\n\n")
+                md_file.write(f"- **Original Article**: [{url}]({url})\n\n")
             else:
                 md_file.write(f"- **Original Article**: None\n\n")
 
@@ -356,6 +356,11 @@ if __name__ == "__main__":
     url = "https://finance.yahoo.com/portfolios"
     user_data_dir = os.path.join(os.getcwd(), "selenium_profile")
 
+    # 1) Create a unique timestamped folder
+    timestamp_str = time.strftime("%Y-%m-%d %H.%M.%S")  
+    output_folder = os.path.join(os.getcwd(), "output", timestamp_str)
+    os.makedirs(output_folder, exist_ok=True)
+
     chrome_options = Options()
     chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
     chrome_options.add_argument('--disable-gpu')
@@ -369,7 +374,7 @@ if __name__ == "__main__":
     try:
         i_print("Opening the browser with user data directory...")
 
-        # 1. Attempt to fetch the news without prompting for login
+        # 2) Attempt to fetch the news without prompting for login
         news_list = get_portfolio_news(driver, url)
 
         if not news_list:
@@ -385,11 +390,12 @@ if __name__ == "__main__":
         
         i_print(f"Found {len(news_list)} portfolio news.")
 
-        # 2. Save the raw news_list to JSON
-        with open("news_list.json", "w", encoding='utf-8') as f:
+        # 3) Save the raw news_list to JSON
+        news_list_path = os.path.join(output_folder, "news_list.json")
+        with open(news_list_path, "w", encoding='utf-8') as f:
             json.dump(news_list, f, indent=2, ensure_ascii=False)
 
-        # 3. Build the final list of news articles with content by scraping each article
+        # 4) Build the final list of news articles with content by scraping each article
         final_news_list = []
         current_final_count = 1
 
@@ -413,32 +419,38 @@ if __name__ == "__main__":
                 })
                 current_final_count += 1
 
-        # 4. Save final_news_list to JSON
-        with open("final_news_list.json", "w", encoding='utf-8') as f:
+        # 5) Save final_news_list to JSON
+        final_news_list_path = os.path.join(output_folder, "final_news_list.json")
+        with open(final_news_list_path, "w", encoding='utf-8') as f:
             json.dump(final_news_list, f, indent=2, ensure_ascii=False)
 
-        # 5. Print logs
+        # 6) Print logs
         s_print(f"Collected {len(news_list)} items in news_list.")
         s_print(f"Collected {len(final_news_list)} items in final_news_list (with content).")
 
-        # 6. Ask the user which articles to summarize and save the selected articles as JSON
+        # 7) Ask the user which articles to summarize
         selected_articles = user_pick_news(final_news_list)
         s_print(f"Selected {len(selected_articles)} articles for summarization.")
 
-        with open("selected_articles.json", "w", encoding='utf-8') as f:
+        # Save selected articles to JSON
+        selected_articles_path = os.path.join(output_folder, "selected_articles.json")
+        with open(selected_articles_path, "w", encoding='utf-8') as f:
             json.dump(selected_articles, f, indent=2, ensure_ascii=False)
 
-        # 7. Summarize the selected articles and save the summaries as JSON
+        # 8) Summarize the selected articles
         if selected_articles:
             summarized_articles = summarize_articles(selected_articles)
             s_print(f"Summarized {len(summarized_articles)} articles.")
 
-            with open("summarized_articles.json", "w", encoding='utf-8') as f:
+            # Save summarized articles to JSON
+            summarized_articles_path = os.path.join(output_folder, "summarized_articles.json")
+            with open(summarized_articles_path, "w", encoding='utf-8') as f:
                 json.dump(summarized_articles, f, indent=2, ensure_ascii=False)
             s_print("Summaries saved to summarized_articles.json")
 
-            # 8. Create a Markdown file of the summarized articles
-            save_summaries_to_markdown(summarized_articles, markdown_filename="summaries.md")
+            # Create a Markdown file of the summarized articles
+            markdown_path = os.path.join(output_folder, "summaries.md")
+            save_summaries_to_markdown(summarized_articles, markdown_filename=markdown_path)
 
         else:
             w_print("No articles were selected for summarization.")
