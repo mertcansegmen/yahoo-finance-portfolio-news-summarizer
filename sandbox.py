@@ -227,7 +227,7 @@ def user_pick_news(final_news_list):
         # Continuously prompt for valid input ('y', 'n', or 'q')
         while True:
             user_input = input(
-                Fore.BLUE + "Press 'y' to summarize, 'n' to skip, or 'q' to skip all remaining articles: " 
+                Fore.BLUE + "Press 'y' to summarize, 'n' to skip, or 'q' to skip all remaining articles: "
                 + Style.RESET_ALL
             ).strip().lower()
 
@@ -277,13 +277,13 @@ def summarize_article(article):
     """
 
     user_prompt = f"""
-    Aşağıdaki haberi bana türkçe olarak özetler misin?
+        Aşağıdaki haberi bana türkçe olarak özetler misin?
 
-    Başlık:
-    {article['title']}
-    
-    İçerik:
-    {article['content']}
+        Başlık:
+        {article['title']}
+
+        İçerik:
+        {article['content']}
     """
 
     system_prompt = "Sen, sana gönderilen finans haberlerini özetleyen bir asistansın."
@@ -318,6 +318,38 @@ def summarize_articles(selected_articles):
         })
 
     return summarized_list
+
+
+def save_summaries_to_markdown(summarized_articles, markdown_filename="summaries.md"):
+    """
+    Creates a Markdown file containing each aerticle's mtadata and summary.
+    """
+    with open(markdown_filename, "w", encoding="utf-8") as md_file:
+        md_file.write("# Summarized Articles\n\n")
+        for article in summarized_articles:
+            title = article.get("title") or "Untitled"
+            when = article.get("when") or "Unknown Date"
+            publisher = article.get("publisher") or "Unknown Publisher"
+            author = article.get("author") or "Unknown Author"
+            stocks = article.get("stocks") or []
+            url = article.get("url") or ""
+            summary = article.get("summary") or ""
+
+            md_file.write(f"## {title}\n\n")
+            md_file.write(f"- **Date**: {when}\n")
+            md_file.write(f"- **Publisher**: {publisher}\n")
+            md_file.write(f"- **Author**: {author}\n")
+            md_file.write(f"- **Related Stocks**: {', '.join(stocks) if stocks else 'None'}\n")
+            if url:
+                md_file.write(f"- **Original Article**: [Go to the original article]({url})\n\n")
+            else:
+                md_file.write(f"- **Original Article**: None\n\n")
+
+            md_file.write("**Summary**:\n\n")
+            md_file.write(f"{summary}\n\n")
+            md_file.write("---\n\n")
+
+    s_print(f"Markdown file '{markdown_filename}' created successfully.")
 
 
 if __name__ == "__main__":
@@ -404,6 +436,10 @@ if __name__ == "__main__":
             with open("summarized_articles.json", "w", encoding='utf-8') as f:
                 json.dump(summarized_articles, f, indent=2, ensure_ascii=False)
             s_print("Summaries saved to summarized_articles.json")
+
+            # 8. Create a Markdown file of the summarized articles
+            save_summaries_to_markdown(summarized_articles, markdown_filename="summaries.md")
+
         else:
             w_print("No articles were selected for summarization.")
 
