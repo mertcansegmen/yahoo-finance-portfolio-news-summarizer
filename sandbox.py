@@ -1,9 +1,11 @@
 import os
 import time
 import json
-import pickle
 from bs4 import BeautifulSoup
 from colorama import Fore, Style, init
+
+import requests
+from dotenv import load_dotenv
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -12,23 +14,35 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 
+load_dotenv()
+
+SCROLL_DOWN_ATTEMPTS = 1
+
+API_KEY = os.getenv('DEEPSEEK_API_KEY')
+API_URL = "https://api.deepseek.com/chat/completions"
+
 init(autoreset=True)
+
 
 def i_print(message: str):
     """Info print."""
     print(Fore.BLUE + "[INFO] " + message + Style.RESET_ALL)
 
+
 def w_print(message: str):
     """Warning print."""
     print(Fore.YELLOW + "[WARNING] " + message + Style.RESET_ALL)
+
 
 def d_print(message: str):
     """Danger (error) print."""
     print(Fore.RED + "[DANGER] " + message + Style.RESET_ALL)
 
+
 def s_print(message: str):
     """Success print."""
     print(Fore.GREEN + "[SUCCESS] " + message + Style.RESET_ALL)
+
 
 def scroll_down_infinite(driver, attempts=5, pause_time=2):
     """
@@ -49,6 +63,7 @@ def scroll_down_infinite(driver, attempts=5, pause_time=2):
             break
         last_height = new_height
 
+
 def get_portfolio_news(driver, url):
     """
     Navigates to the Yahoo Finance portfolios page, scrolls to load news items (infinite scroll),
@@ -60,7 +75,7 @@ def get_portfolio_news(driver, url):
     time.sleep(5)
 
     # Scroll to load more news (infinite scroll)
-    scroll_down_infinite(driver, attempts=5, pause_time=2)
+    scroll_down_infinite(driver, attempts=SCROLL_DOWN_ATTEMPTS, pause_time=2)
 
     # Parse the loaded page
     soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -107,6 +122,7 @@ def get_portfolio_news(driver, url):
         })
 
     return news_list
+
 
 def get_full_article(driver, article_url):
     """
@@ -182,13 +198,126 @@ def get_full_article(driver, article_url):
         'stocks': stocks
     }
 
-def pick_news(final_news_list):
+
+def user_pick_news(final_news_list):
     """
-    Decide which news items from final_news_list we want to summarize.
-    Placeholder: returns the entire list right now.
-    You can later add custom logic or filters here.
+    Asks the user, for each article, if they want to summarize it.
+    User inputs:
+      - 'y' -> Summarize the current article
+      - 'n' -> Skip the current article
+      - 'q' -> Skip all remaining articles
+    Returns a list of articles selected for summarization.
     """
-    return final_news_list
+    selected_articles = []
+    skip_all = False
+
+    for article in final_news_list:
+        # If the user already chose to skip all, break out of the loop immediately
+        if skip_all:
+            break
+
+        i_print("\n\n--- Article Info ---")
+        i_print(f"Title: {article['title']}")
+        i_print(f"Author: {article['author']}")
+        i_print(f"Publisher: {article['publisher']}")
+        i_print(f"When: {article['when']}")
+        i_print(f"Stocks: {', '.join(article['stocks']) if article['stocks'] else 'None'}")
+        i_print(f"Content (first 300 chars): {article['content'][:300]}...")
+
+        # Continuously prompt for valid input ('y', 'n', or 'q')
+        while True:
+            user_input = input(
+                Fore.BLUE + "Press 'y' to summarize, 'n' to skip, or 'q' to skip all remaining articles: " 
+                + Style.RESET_ALL
+            ).strip().lower()
+
+            if user_input == 'y':
+                selected_articles.append(article)
+                s_print(f"Added article: {article['title']}")
+                break
+            elif user_input == 'n':
+                i_print(f"Skipped article: {article['title']}")
+                break
+            elif user_input == 'q':
+                w_print("Skipping all remaining articles.")
+                skip_all = True
+                break
+            else:
+                i_print("Invalid input. Please press 'y', 'n', or 'q'.")
+
+    return selected_articles
+
+
+def call_deepseek(user_prompt: str, system_prompt: str):
+    """
+    Internal helper to send prompt + system instructions to DeepSeek Chat.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}",
+    }
+    data = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+    }
+
+    response = requests.post(API_URL, headers=headers, json=data)
+    response.raise_for_status()
+    return response.json()
+
+
+def summarize_article(article):
+    """
+    Summarizes the given article using DeepSeek v3 Chat.
+    Returns the summary string.
+    """
+
+    user_prompt = f"""
+    Aşağıdaki haberi bana türkçe olarak özetler misin?
+
+    Başlık:
+    {article['title']}
+    
+    İçerik:
+    {article['content']}
+    """
+
+    system_prompt = "Sen, sana gönderilen finans haberlerini özetleyen bir asistansın."
+    
+    response_data = call_deepseek(user_prompt, system_prompt)
+    
+    assistant_content = response_data["choices"][0]["message"]["content"]
+
+    return assistant_content
+
+
+def summarize_articles(selected_articles):
+    """
+    Summarizes each article in selected_articles using the summarize_article function.
+    Returns a list of dictionaries containing article info + summary.
+    """
+    summarized_list = []
+    for idx, article in enumerate(selected_articles, start=1):
+        i_print(f"Summarizing article #{idx}: {article['title']}")
+        summary_text = summarize_article(article)
+
+        # Store summarized article info
+        summarized_list.append({
+            'count': article['count'],
+            'title': article['title'],
+            'when': article['when'],
+            'publisher': article['publisher'],
+            'author': article['author'],
+            'stocks': article['stocks'],
+            'url': article['url'],
+            'summary': summary_text
+        })
+
+    return summarized_list
 
 
 if __name__ == "__main__":
@@ -221,16 +350,17 @@ if __name__ == "__main__":
                 d_print("Still cannot find the portfolio news. Exiting.")
                 driver.quit()
                 exit(1)
+        
+        i_print(f"Found {len(news_list)} portfolio news.")
 
         # 2. Save the raw news_list to JSON
         with open("news_list.json", "w", encoding='utf-8') as f:
             json.dump(news_list, f, indent=2, ensure_ascii=False)
 
-        # 3. Build the final list of news articles with content
+        # 3. Build the final list of news articles with content by scraping each article
         final_news_list = []
         current_final_count = 1
 
-        # Attempt to parse all items
         for item in news_list:
             article_url = item.get('url')
             if not article_url:
@@ -259,9 +389,23 @@ if __name__ == "__main__":
         s_print(f"Collected {len(news_list)} items in news_list.")
         s_print(f"Collected {len(final_news_list)} items in final_news_list (with content).")
 
-        # 6. Use the pick_news function to decide which articles to summarize
-        picked_articles = pick_news(final_news_list)
-        s_print(f"Picked {len(picked_articles)} articles to summarize.")
+        # 6. Ask the user which articles to summarize and save the selected articles as JSON
+        selected_articles = user_pick_news(final_news_list)
+        s_print(f"Selected {len(selected_articles)} articles for summarization.")
+
+        with open("selected_articles.json", "w", encoding='utf-8') as f:
+            json.dump(selected_articles, f, indent=2, ensure_ascii=False)
+
+        # 7. Summarize the selected articles and save the summaries as JSON
+        if selected_articles:
+            summarized_articles = summarize_articles(selected_articles)
+            s_print(f"Summarized {len(summarized_articles)} articles.")
+
+            with open("summarized_articles.json", "w", encoding='utf-8') as f:
+                json.dump(summarized_articles, f, indent=2, ensure_ascii=False)
+            s_print("Summaries saved to summarized_articles.json")
+        else:
+            w_print("No articles were selected for summarization.")
 
     finally:
         driver.quit()
