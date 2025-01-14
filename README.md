@@ -57,7 +57,7 @@ You also need a **DeepSeek** API key to enable article summarization. Please see
 1. **Clone or download** this repository:
 
    ```bash
-   git clone <https://github.com/mertcansegmen/yahoo-finance-portfolio-news-summarizer.git>
+   git clone https://github.com/mertcansegmen/yahoo-finance-portfolio-news-summarizer.git
    ```
 
 2. **Install dependencies**:
